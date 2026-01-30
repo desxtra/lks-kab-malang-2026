@@ -1,18 +1,13 @@
 {
-  "name": "lks-cloud-app",
+  "name": "lks-simple-app",
   "version": "1.0.0",
-  "description": "Aplikasi untuk kompetensi LKS Cloud Computing 2026",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "start": "node index.js"
   },
   "dependencies": {
     "express": "^4.18.2",
     "mysql2": "^3.6.0",
     "redis": "^4.6.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
   }
 }
