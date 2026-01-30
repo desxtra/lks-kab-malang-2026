@@ -5,201 +5,153 @@ const redis = require('redis');
 const app = express();
 const PORT = 3000;
 
-// Ambil config dari environment variable atau default
+// Load dari .env - PASTIKAN file .env ada di folder yang sama
 const DB_CONFIG = {
-  host: process.env.MYSQL_HOST || 'localhost',
-  user: process.env.MYSQL_USER || 'root',
+  host: process.env.MYSQL_HOST || 'lks-rds.cihieuwmw1xw.us-east-1.rds.amazonaws.com',
+  user: process.env.MYSQL_USER || 'admin',
   password: process.env.MYSQL_PASSWORD || 'password',
-  database: process.env.MYSQL_DATABASE || 'mysql' // Pakai database default saja
+  database: process.env.MYSQL_DATABASE || 'mysql'
 };
 
-const REDIS_CONFIG = {
-  host: process.env.REDIS_HOST || 'localhost',
-  port: process.env.REDIS_PORT || 6379
-};
+// Redis config dari .env - GUNAKAN ENDPOINT YANG BENAR
+const REDIS_HOST = process.env.REDIS_HOST || 'redis.brcmro.ng.0001.use1.cache.amazonaws.com';
+const REDIS_PORT = parseInt(process.env.REDIS_PORT) || 6379;
+const REDIS_TLS = process.env.REDIS_TLS === 'true';
 
 let mysqlStatus = '❌ NOT CONNECTED';
 let redisStatus = '❌ NOT CONNECTED';
 
-// Cek koneksi MySQL saja - TIDAK buat tabel
+// Cek MySQL
 async function checkMySQL() {
   try {
-    const connection = await mysql.createConnection({
-      host: DB_CONFIG.host,
-      user: DB_CONFIG.user,
-      password: DB_CONFIG.password
-    });
-    
-    // Hanya cek koneksi dan ambil nama database
-    const [rows] = await connection.execute('SELECT DATABASE() as db_name');
-    const dbName = rows[0].db_name || 'No database selected';
-    
-    mysqlStatus = `✅ CONNECTED (Database: ${dbName})`;
+    console.log(`Connecting to MySQL: ${DB_CONFIG.host}`);
+    const connection = await mysql.createConnection(DB_CONFIG);
+    const [rows] = await connection.execute('SELECT 1 as test');
+    mysqlStatus = '✅ CONNECTED';
     await connection.end();
     return true;
   } catch (error) {
-    mysqlStatus = `❌ ERROR: ${error.message}`;
+    mysqlStatus = `❌ ${error.code || 'Connection failed'}`;
     return false;
   }
 }
 
-// Cek koneksi Redis saja
+// Cek Redis - PAKAI ENDPOINT YANG SUDAH TERBUKTI BISA
 async function checkRedis() {
+  console.log(`Connecting to Redis: ${REDIS_HOST}:${REDIS_PORT} (TLS: ${REDIS_TLS})`);
+  
   try {
-    const client = redis.createClient(REDIS_CONFIG);
+    const client = redis.createClient({
+      socket: {
+        host: REDIS_HOST,
+        port: REDIS_PORT,
+        tls: REDIS_TLS,
+        // Timeout lebih lama
+        connectTimeout: 10000,
+        reconnectStrategy: (retries) => {
+          return Math.min(retries * 100, 3000);
+        }
+      }
+    });
+
+    // Handle events untuk debugging
+    client.on('error', (err) => {
+      console.log('Redis client error:', err.message);
+    });
+
+    client.on('connect', () => {
+      console.log('Redis client connecting...');
+    });
+
+    client.on('ready', () => {
+      console.log('Redis client ready');
+    });
+
     await client.connect();
     
-    // Simpan timestamp di Redis sebagai bukti kerja
-    await client.set('lks_test', new Date().toISOString());
+    // Test sederhana
+    await client.set('lks_test', 'connected_' + new Date().toISOString());
     const value = await client.get('lks_test');
     
-    redisStatus = `✅ CONNECTED (Test Value: ${value})`;
+    redisStatus = `✅ CONNECTED (Value: ${value})`;
     await client.quit();
     return true;
   } catch (error) {
-    redisStatus = `❌ ERROR: ${error.message}`;
+    console.error('Redis connection error:', error.message);
+    redisStatus = `❌ ${error.code || error.message}`;
     return false;
   }
 }
 
-// Route utama - Sesuai permintaan "its work!"
+// Route utama
 app.get('/', async (req, res) => {
-  // Cek koneksi setiap kali diakses
-  await checkMySQL();
-  await checkRedis();
+  await Promise.all([checkMySQL(), checkRedis()]);
   
   res.send(`
     <!DOCTYPE html>
     <html>
-    <head>
-      <title>LKS Cloud 2026</title>
-      <style>
-        body { 
-          font-family: Arial; 
-          padding: 40px; 
-          text-align: center;
-          background: #f5f5f5;
-        }
-        .container {
-          max-width: 800px;
-          margin: 0 auto;
-          background: white;
-          padding: 30px;
-          border-radius: 10px;
-          box-shadow: 0 0 10px rgba(0,0,0,0.1);
-        }
-        h1 { color: #2c3e50; }
-        .status {
-          padding: 15px;
-          margin: 10px 0;
-          border-radius: 5px;
-          font-weight: bold;
-        }
-        .success { background: #d4edda; color: #155724; }
-        .error { background: #f8d7da; color: #721c24; }
-        .info { background: #d1ecf1; color: #0c5460; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <h1>🚀 ITS WORK!</h1>
-        <p class="info">LKS Cloud Computing 2026 - Simple Deployment Test</p>
-        
-        <h2>📊 Service Status:</h2>
-        
-        <div class="status ${mysqlStatus.includes('✅') ? 'success' : 'error'}">
-          <strong>MySQL/RDS:</strong> ${mysqlStatus}
-        </div>
-        
-        <div class="status ${redisStatus.includes('✅') ? 'success' : 'error'}">
-          <strong>Redis:</strong> ${redisStatus}
-        </div>
-        
-        <div class="status success">
-          <strong>EC2 Instance:</strong> ✅ RUNNING (Port: ${PORT})
-        </div>
-        
-        <h3>🔗 Quick Links:</h3>
-        <p>
-          <a href="/status">/status</a> | 
-          <a href="/health">/health</a> | 
-          <a href="/simple-check">/simple-check</a>
-        </p>
-        
-        <hr>
-        <p><small>Last checked: ${new Date().toLocaleString()}</small></p>
+    <head><title>LKS Cloud 2026</title></head>
+    <body style="font-family: Arial; padding: 20px; text-align: center;">
+      <h1>✅ ITS WORK!</h1>
+      <h2>Status Layanan:</h2>
+      
+      <div style="background: ${mysqlStatus.includes('✅') ? '#d4edda' : '#f8d7da'}; 
+                  color: ${mysqlStatus.includes('✅') ? '#155724' : '#721c24'};
+                  padding: 10px; margin: 10px; border-radius: 5px;">
+        <strong>MySQL/RDS:</strong> ${mysqlStatus}
       </div>
+      
+      <div style="background: ${redisStatus.includes('✅') ? '#d4edda' : '#f8d7da'}; 
+                  color: ${redisStatus.includes('✅') ? '#155724' : '#721c24'};
+                  padding: 10px; margin: 10px; border-radius: 5px;">
+        <strong>Redis:</strong> ${redisStatus}
+      </div>
+      
+      <div style="background: #d4edda; color: #155724; 
+                  padding: 10px; margin: 10px; border-radius: 5px;">
+        <strong>EC2 Instance:</strong> ✅ RUNNING (Port: ${PORT})
+      </div>
+      
+      <hr>
+      <p><small>MySQL: ${DB_CONFIG.host} | Redis: ${REDIS_HOST}:${REDIS_PORT}</small></p>
+      <p><small>Environment variables loaded from .env file</small></p>
     </body>
     </html>
   `);
 });
 
-// Route sederhana untuk JSON response
-app.get('/status', async (req, res) => {
+// Health check endpoint
+app.get('/health', async (req, res) => {
   const mysqlOk = await checkMySQL();
   const redisOk = await checkRedis();
   
   res.json({
-    app: "LKS Cloud Computing 2026",
-    message: "ITS WORK!",
+    status: mysqlOk && redisOk ? "healthy" : "degraded",
     timestamp: new Date().toISOString(),
     services: {
-      ec2: { status: "running", port: PORT },
-      mysql: { 
-        connected: mysqlOk,
-        message: mysqlStatus,
-        config: {
-          host: DB_CONFIG.host,
-          user: DB_CONFIG.user,
-          database: DB_CONFIG.database
-        }
-      },
-      redis: {
-        connected: redisOk,
-        message: redisStatus,
-        config: REDIS_CONFIG
-      }
+      mysql: mysqlStatus,
+      redis: redisStatus,
+      ec2: "running"
     }
   });
-});
-
-// Health check minimal
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: "healthy",
-    service: "LKS Cloud App",
-    time: new Date().toISOString()
-  });
-});
-
-// Cek paling sederhana
-app.get('/simple-check', (req, res) => {
-  res.send(`
-    <div style="font-family: Arial; padding: 20px;">
-      <h2>Simple Check Result:</h2>
-      <p><strong>MySQL:</strong> ${mysqlStatus}</p>
-      <p><strong>Redis:</strong> ${redisStatus}</p>
-      <p><strong>EC2:</strong> ✅ Working</p>
-      <br>
-      <p><strong>Conclusion:</strong> ${mysqlStatus.includes('✅') && redisStatus.includes('✅') ? 'ALL SERVICES CONNECTED!' : 'SOME SERVICES FAILED'}</p>
-    </div>
-  `);
 });
 
 // Jalankan server
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`=========================================`);
-  console.log(`🚀 LKS Cloud App Running on Port ${PORT}`);
-  console.log(`📡 Access at: http://0.0.0.0:${PORT}`);
+  console.log(`🚀 LKS Cloud App Starting...`);
+  console.log(`📡 Port: ${PORT}`);
+  console.log(`🔗 Access: http://0.0.0.0:${PORT}`);
+  console.log(`📊 MySQL: ${DB_CONFIG.host}`);
+  console.log(`🎯 Redis: ${REDIS_HOST}:${REDIS_PORT}`);
   console.log(`=========================================`);
   
   // Test koneksi saat startup
-  console.log('🔍 Testing connections on startup...');
   checkMySQL().then(() => {
-    console.log(`   MySQL: ${mysqlStatus}`);
+    console.log(`✅ MySQL: ${mysqlStatus}`);
   });
   
   checkRedis().then(() => {
-    console.log(`   Redis: ${redisStatus}`);
+    console.log(`✅ Redis: ${redisStatus}`);
   });
 });
